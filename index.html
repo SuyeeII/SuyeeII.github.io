@@ -63,54 +63,49 @@ h1{text-align:center;margin-bottom:12px}
 </div>
 
 <script>
-// 零注册云端存储：用 jsonstore.io（免费、无需账号）
-// 替换成你自己的唯一key（随便写一串字母数字，比如 campus-cats-20260309）
-const UNIQUE_KEY = "campus-cats-suyeeii-2026";
-const API_URL = `https://www.jsonstore.io/${UNIQUE_KEY}`;
+// 已替换为你的 Gist ID
+const GIST_ID = "f851551861e0fdba1f5bdf23d497b136";
+const API_URL = `https://api.github.com/gists/${GIST_ID}`;
 
-// 初始化：如果云端无数据，创建空数组
-async function initStore() {
-  try {
-    const res = await fetch(API_URL);
-    const data = await res.json();
-    if (!data.result) {
-      await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify([])
-      });
-    }
-  } catch (e) {
-    console.log("初始化存储", e);
-  }
-}
-
-// 读取云端所有猫咪
+// 从 Gist 读取猫咪数据
 async function getCats() {
   try {
     const res = await fetch(API_URL);
     const data = await res.json();
-    return data.result || [];
+    // 兼容 Gist 初始为空的情况
+    const content = data.files["cats-db.json"]?.content || "[]";
+    return JSON.parse(content) || [];
   } catch (e) {
+    console.error("读取失败", e);
     return [];
   }
 }
 
-// 保存猫咪到云端
+// 保存猫咪数据到 Gist
 async function saveCats(cats) {
   try {
     await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cats)
+      method: "PATCH",
+      headers: {
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        files: {
+          "cats-db.json": {
+            content: JSON.stringify(cats, null, 2)
+          }
+        }
+      })
     });
     return true;
   } catch (e) {
+    console.error("保存失败", e);
     return false;
   }
 }
 
-// 上传图片到免费图床（sm.ms，零注册）
+// 上传图片到免费图床（兼容国内访问）
 async function uploadPhoto(file) {
   if (!file) return "";
   const formData = new FormData();
@@ -123,6 +118,7 @@ async function uploadPhoto(file) {
     const data = await res.json();
     return data.success ? data.data.url : "";
   } catch (e) {
+    // 图床失败时返回空，不影响文字内容
     return "";
   }
 }
@@ -159,7 +155,7 @@ async function addCat() {
     document.getElementById("catForm").reset();
     render();
   } else {
-    alert("发布失败，请稍后重试");
+    alert("发布失败，可能是网络问题，请稍后重试");
   }
 }
 
@@ -191,7 +187,11 @@ async function render() {
 
 // 页面加载时初始化并渲染
 window.onload = async () => {
-  await initStore();
+  // 初始化 Gist 数据（如果为空则创建空数组）
+  const cats = await getCats();
+  if (cats.length === 0) {
+    await saveCats([]);
+  }
   render();
 };
 </script>
