@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>校园猫咪档案</title>
+<title>校园猫咪档案（共享版）</title>
 <style>
 *{box-sizing:border-box;font-family:system-ui,sans-serif}
 body{margin:0;padding:16px;background:#f6f7f9;color:#222}
@@ -42,7 +42,7 @@ h1{text-align:center;margin-bottom:12px}
 </head>
 <body>
 <div class="container">
-  <h1>校园猫咪档案</h1>
+  <h1>校园猫咪档案（共享版）</h1>
   <input 
     type="text" 
     class="search-box" 
@@ -63,81 +63,137 @@ h1{text-align:center;margin-bottom:12px}
 </div>
 
 <script>
-// 纯本地存储，无任何外部接口依赖
-function getCats() {
-  const catsStr = localStorage.getItem("campusCats");
-  return catsStr ? JSON.parse(catsStr) : [];
+// 零注册云端存储：用 jsonstore.io（免费、无需账号）
+// 替换成你自己的唯一key（随便写一串字母数字，比如 campus-cats-20260309）
+const UNIQUE_KEY = "campus-cats-suyeeii-2026";
+const API_URL = `https://www.jsonstore.io/${UNIQUE_KEY}`;
+
+// 初始化：如果云端无数据，创建空数组
+async function initStore() {
+  try {
+    const res = await fetch(API_URL);
+    const data = await res.json();
+    if (!data.result) {
+      await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify([])
+      });
+    }
+  } catch (e) {
+    console.log("初始化存储", e);
+  }
 }
 
-function saveCats(cats) {
-  localStorage.setItem("campusCats", JSON.stringify(cats));
+// 读取云端所有猫咪
+async function getCats() {
+  try {
+    const res = await fetch(API_URL);
+    const data = await res.json();
+    return data.result || [];
+  } catch (e) {
+    return [];
+  }
 }
 
+// 保存猫咪到云端
+async function saveCats(cats) {
+  try {
+    await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cats)
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// 上传图片到免费图床（sm.ms，零注册）
+async function uploadPhoto(file) {
+  if (!file) return "";
+  const formData = new FormData();
+  formData.append("smfile", file);
+  try {
+    const res = await fetch("https://sm.ms/api/v2/upload", {
+      method: "POST",
+      body: formData
+    });
+    const data = await res.json();
+    return data.success ? data.data.url : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+// 添加猫咪（姓名必填）
 async function addCat() {
-  // 仅验证姓名必填
   const name = document.getElementById("name").value.trim();
   if (!name) {
     alert("请填写猫咪的名字哦～这是唯一必填项");
     return;
   }
 
-  // 收集信息（所有字段都可选）
-  const age = document.getElementById("age").value.trim();
-  const weight = document.getElementById("weight").value.trim();
-  const desc = document.getElementById("desc").value.trim();
+  const age = document.getElementById("age").value.trim() || "未知";
+  const weight = document.getElementById("weight").value.trim() || "未知";
+  const desc = document.getElementById("desc").value.trim() || "暂无描述";
+  const photoFile = document.getElementById("photo").files[0];
+  const photo = await uploadPhoto(photoFile);
   const time = new Date().toLocaleString();
-  
-  // 照片可选：有则处理，无则设为空
-  let photo = "";
-  const photoInp = document.getElementById("photo");
-  if (photoInp.files.length > 0) {
-    photo = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.readAsDataURL(photoInp.files[0]);
-    });
+
+  const cats = await getCats();
+  cats.unshift({
+    id: Date.now(),
+    name,
+    age,
+    weight,
+    desc,
+    photo,
+    time
+  });
+
+  const ok = await saveCats(cats);
+  if (ok) {
+    alert("发布成功！所有同学都能看到这只小可爱啦～");
+    document.getElementById("catForm").reset();
+    render();
+  } else {
+    alert("发布失败，请稍后重试");
   }
-
-  // 保存到本地
-  const cats = getCats();
-  cats.unshift({ name, age, weight, desc, photo, time });
-  saveCats(cats);
-
-  // 反馈+重置+刷新列表
-  alert("发布成功！已添加这只小可爱的档案～");
-  document.getElementById("catForm").reset();
-  render();
 }
 
-function render() {
+// 渲染列表（带搜索）
+async function render() {
   const list = document.getElementById("cat-list");
   const keyword = document.getElementById("search").value.toLowerCase();
-  const cats = getCats();
+  const cats = await getCats();
 
-  // 搜索过滤
-  const filteredCats = cats.filter(cat => 
+  const filtered = cats.filter(cat =>
     cat.name.toLowerCase().includes(keyword)
   );
 
-  // 渲染列表
-  if (filteredCats.length === 0) {
+  if (filtered.length === 0) {
     list.innerHTML = `<p style="text-align:center; color:#666; padding:20px">暂无猫咪档案，快来添加第一只吧～</p>`;
     return;
   }
 
-  list.innerHTML = filteredCats.map(cat => `
+  list.innerHTML = filtered.map(cat => `
     <div class="cat-card">
-      ${cat.photo ? `<img src="${cat.photo}" alt="${cat.name}的照片">` : ''}
+      ${cat.photo ? `<img src="${cat.photo}" alt="${cat.name}">` : ''}
       <h3>${cat.name}</h3>
-      <p>年龄：${cat.age || '未知'} ｜ 体重：${cat.weight || '未知'} kg</p>
-      <p class="desc">${cat.desc || '暂无描述'}</p>
+      <p>年龄：${cat.age} ｜ 体重：${cat.weight} kg</p>
+      <p class="desc">${cat.desc}</p>
       <small>添加时间：${cat.time}</small>
     </div>
   `).join("");
 }
 
-// 页面加载时渲染列表
-render();
+// 页面加载时初始化并渲染
+window.onload = async () => {
+  await initStore();
+  render();
+};
 </script>
 </body>
 </html>
