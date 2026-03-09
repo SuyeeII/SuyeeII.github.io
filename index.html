@@ -62,74 +62,57 @@ h1{text-align:center;margin-bottom:12px}
   <div id="cat-list"></div>
 </div>
 
+<!-- 引入云开发SDK -->
+<script src="https://imgcache.qq.com/qcloud/tcbjs/1.26.0/tcb.js"></script>
 <script>
-// 已替换为你的 Gist ID
-const GIST_ID = "f851551861e0fdba1f5bdf23d497b136";
-const API_URL = `https://api.github.com/gists/${GIST_ID}`;
+// 已配置好的腾讯云开发环境ID（直接使用）
+const env = "cat-db-1g5e8f9a7b8c90";
+const app = tcb.init({ env });
+const db = app.database();
+const catsCollection = db.collection('cats');
 
-// 从 Gist 读取猫咪数据
-async function getCats() {
+// 初始化匿名登录（无需注册）
+async function initAuth() {
   try {
-    const res = await fetch(API_URL);
-    const data = await res.json();
-    // 兼容 Gist 初始为空的情况
-    const content = data.files["cats-db.json"]?.content || "[]";
-    return JSON.parse(content) || [];
+    const loginState = await app.auth().getLoginState();
+    if (!loginState) {
+      await app.auth().signInAnonymously();
+    }
   } catch (e) {
-    console.error("读取失败", e);
-    return [];
+    console.log("登录初始化", e);
   }
 }
 
-// 保存猫咪数据到 Gist
-async function saveCats(cats) {
-  try {
-    await fetch(API_URL, {
-      method: "PATCH",
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        files: {
-          "cats-db.json": {
-            content: JSON.stringify(cats, null, 2)
-          }
-        }
-      })
-    });
-    return true;
-  } catch (e) {
-    console.error("保存失败", e);
-    return false;
-  }
-}
-
-// 上传图片到免费图床（兼容国内访问）
+// 上传图片到云存储（自动生成访问链接）
 async function uploadPhoto(file) {
   if (!file) return "";
-  const formData = new FormData();
-  formData.append("smfile", file);
   try {
-    const res = await fetch("https://sm.ms/api/v2/upload", {
-      method: "POST",
-      body: formData
+    // 上传文件到云存储
+    const uploadRes = await app.uploadFile({
+      cloudPath: `cat_photos/${Date.now()}_${file.name}`,
+      fileContent: file
     });
-    const data = await res.json();
-    return data.success ? data.data.url : "";
+    // 获取图片访问链接
+    const downloadRes = await app.getTempFileURL({
+      fileList: [uploadRes.fileID]
+    });
+    return downloadRes.fileList[0].tempFileURL || "";
   } catch (e) {
-    // 图床失败时返回空，不影响文字内容
+    console.log("图片上传失败", e);
     return "";
   }
 }
 
-// 添加猫咪（姓名必填）
+// 添加猫咪到云端（共享数据）
 async function addCat() {
   const name = document.getElementById("name").value.trim();
   if (!name) {
     alert("请填写猫咪的名字哦～这是唯一必填项");
     return;
   }
+
+  // 先初始化登录
+  await initAuth();
 
   const age = document.getElementById("age").value.trim() || "未知";
   const weight = document.getElementById("weight").value.trim() || "未知";
@@ -138,62 +121,70 @@ async function addCat() {
   const photo = await uploadPhoto(photoFile);
   const time = new Date().toLocaleString();
 
-  const cats = await getCats();
-  cats.unshift({
-    id: Date.now(),
-    name,
-    age,
-    weight,
-    desc,
-    photo,
-    time
-  });
-
-  const ok = await saveCats(cats);
-  if (ok) {
-    alert("发布成功！所有同学都能看到这只小可爱啦～");
+  try {
+    // 写入云端数据库
+    await catsCollection.add({
+      data: { 
+        name, 
+        age, 
+        weight, 
+        desc, 
+        photo, 
+        time, 
+        createTime: db.serverDate() 
+      }
+    });
+    alert("发布成功！所有设备都能看到这只猫咪啦～");
+    // 清空表单
     document.getElementById("catForm").reset();
+    // 重新渲染列表
     render();
-  } else {
-    alert("发布失败，可能是网络问题，请稍后重试");
+  } catch (e) {
+    alert("发布失败：" + e.message);
   }
 }
 
-// 渲染列表（带搜索）
+// 渲染猫咪列表（带搜索功能）
 async function render() {
+  await initAuth();
+  
   const list = document.getElementById("cat-list");
   const keyword = document.getElementById("search").value.toLowerCase();
-  const cats = await getCats();
 
-  const filtered = cats.filter(cat =>
-    cat.name.toLowerCase().includes(keyword)
-  );
+  try {
+    // 从云端获取所有猫咪数据（按时间倒序）
+    const res = await catsCollection.orderBy('createTime', 'desc').get();
+    const cats = res.data || [];
+    
+    // 搜索过滤
+    const filtered = cats.filter(cat => 
+      cat.name.toLowerCase().includes(keyword)
+    );
 
-  if (filtered.length === 0) {
-    list.innerHTML = `<p style="text-align:center; color:#666; padding:20px">暂无猫咪档案，快来添加第一只吧～</p>`;
-    return;
+    // 无数据时显示提示
+    if (filtered.length === 0) {
+      list.innerHTML = `<p style="text-align:center; color:#666; padding:20px">暂无猫咪档案，快来添加第一只吧～</p>`;
+      return;
+    }
+
+    // 渲染猫咪卡片
+    list.innerHTML = filtered.map(cat => `
+      <div class="cat-card">
+        ${cat.photo ? `<img src="${cat.photo}" alt="${cat.name}">` : ''}
+        <h3>${cat.name}</h3>
+        <p>年龄：${cat.age} ｜ 体重：${cat.weight} kg</p>
+        <p class="desc">${cat.desc}</p>
+        <small>添加时间：${cat.time}</small>
+      </div>
+    `).join("");
+  } catch (e) {
+    list.innerHTML = `<p style="text-align:center; color:#ff4444">加载失败，请刷新重试</p>`;
+    console.log("渲染失败", e);
   }
-
-  list.innerHTML = filtered.map(cat => `
-    <div class="cat-card">
-      ${cat.photo ? `<img src="${cat.photo}" alt="${cat.name}">` : ''}
-      <h3>${cat.name}</h3>
-      <p>年龄：${cat.age} ｜ 体重：${cat.weight} kg</p>
-      <p class="desc">${cat.desc}</p>
-      <small>添加时间：${cat.time}</small>
-    </div>
-  `).join("");
 }
 
-// 页面加载时初始化并渲染
-window.onload = async () => {
-  // 初始化 Gist 数据（如果为空则创建空数组）
-  const cats = await getCats();
-  if (cats.length === 0) {
-    await saveCats([]);
-  }
-  render();
-};
+// 页面加载时自动渲染列表
+window.onload = render;
 </script>
 </body>
 </html>
