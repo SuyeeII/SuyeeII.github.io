@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>校园猫咪档案</title>
+<style>
+*{box-sizing:border-box;font-family:system-ui,sans-serif}
+body{margin:0;padding:16px;background:#f6f7f9;color:#222}
+.container{max-width:700px;margin:0 auto}
+h1{text-align:center;margin-bottom:12px}
+.search-box{
+  width:100%;padding:10px 12px;
+  border:1px solid #ddd;border-radius:8px;
+  margin-bottom:16px;font-size:16px
+}
+.form{
+  background:#fff;padding:16px;border-radius:12px;
+  margin-bottom:20px;box-shadow:0 2px 6px #0001
+}
+.form input,.form textarea{
+  width:100%;margin-bottom:10px;padding:10px;
+  border:1px solid #ddd;border-radius:8px
+}
+.form button{
+  width:100%;padding:12px;background:#4e8aff;
+  color:#fff;border:none;border-radius:8px;font-size:16px
+}
+.cat-card{
+  background:#fff;border-radius:12px;padding:14px;
+  margin-bottom:12px;box-shadow:0 2px 6px #0001
+}
+.cat-card img{
+  width:100%;height:auto;border-radius:8px;
+  max-height:360px;object-fit:cover
+}
+.cat-card h3{margin:10px 0 4px}
+.cat-card p{margin:4px 0;color:#555}
+.cat-card small{color:#999;font-size:12px}
+.desc{white-space:pre-line}
+/* 标记必填项 */
+.required-tip{color:#ff4444;font-size:12px;margin:-8px 0 8px 0}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>校园猫咪档案</h1>
+  <input 
+    type="text" 
+    class="search-box" 
+    placeholder="🔍 搜索猫咪名字" 
+    oninput="render()"
+    id="search"
+  >
+  <form class="form" id="catForm">
+    <input id="name" placeholder="猫咪名字（必填）">
+    <div class="required-tip">* 仅名字为必填项，其他信息可选填</div>
+    <input id="age" placeholder="年龄（岁）">
+    <input id="weight" placeholder="体重（kg）">
+    <textarea id="desc" rows="3" placeholder="描述、性格、经常出现位置"></textarea>
+    <input type="file" id="photo" accept="image/*">
+    <button type="button" onclick="addCat()">发布猫咪</button>
+  </form>
+  <div id="cat-list"></div>
+</div>
+
+<script>
+// 纯本地存储，无任何外部接口依赖
+function getCats() {
+  const catsStr = localStorage.getItem("campusCats");
+  return catsStr ? JSON.parse(catsStr) : [];
+}
+
+function saveCats(cats) {
+  localStorage.setItem("campusCats", JSON.stringify(cats));
+}
+
+async function addCat() {
+  // 仅验证姓名为必填
+  const name = document.getElementById("name").value.trim();
+  if (!name) {
+    alert("请填写猫咪的名字哦～这是唯一必填项");
+    return;
+  }
+
+  // 收集信息（所有字段都可选）
+  const age = document.getElementById("age").value.trim();
+  const weight = document.getElementById("weight").value.trim();
+  const desc = document.getElementById("desc").value.trim();
+  const time = new Date().toLocaleString();
+  
+  // 照片可选：有则处理，无则设为空
+  let photo = "";
+  const photoInp = document.getElementById("photo");
+  if (photoInp.files.length > 0) {
+    photo = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.readAsDataURL(photoInp.files[0]);
+    });
+  }
+
+  // 保存到本地
+  const cats = getCats();
+  cats.unshift({ name, age, weight, desc, photo, time });
+  saveCats(cats);
+
+  // 反馈+重置+刷新列表
+  alert("发布成功！已添加这只小可爱的档案～");
+  document.getElementById("catForm").reset();
+  render();
+}
+
+function render() {
+  const list = document.getElementById("cat-list");
+  const keyword = document.getElementById("search").value.toLowerCase();
+  const cats = getCats();
+
+  // 搜索过滤
+  const filteredCats = cats.filter(cat => 
+    cat.name.toLowerCase().includes(keyword)
+  );
+
+  // 渲染列表
+  if (filteredCats.length === 0) {
+    list.innerHTML = `<p style="text-align:center; color:#666; padding:20px">暂无猫咪档案，快来添加第一只吧～</p>`;
+    return;
+  }
+
+  list.innerHTML = filteredCats.map(cat => `
+    <div class="cat-card">
+      ${cat.photo ? `<img src="${cat.photo}" alt="${cat.name}的照片">` : ''}
+      <h3>${cat.name}</h3>
+      <p>年龄：${cat.age || '未知'} ｜ 体重：${cat.weight || '未知'} kg</p>
+      <p class="desc">${cat.desc || '暂无描述'}</p>
+      <small>添加时间：${cat.time}</small>
+    </div>
+  `).join("");
+}
+
+// 页面加载时渲染列表
+render();
+</script>
+</body>
+</html>
