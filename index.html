@@ -62,48 +62,58 @@ h1{text-align:center;margin-bottom:12px}
   <div id="cat-list"></div>
 </div>
 
-<!-- 引入云开发SDK -->
-<script src="https://imgcache.qq.com/qcloud/tcbjs/1.26.0/tcb.js"></script>
 <script>
-// 已配置好的腾讯云开发环境ID（直接使用）
-const env = "cat-db-1g5e8f9a7b8c90";
-const app = tcb.init({ env });
-const db = app.database();
-const catsCollection = db.collection('cats');
+// 核心配置：替换为你的 GitHub 仓库信息
+const GITHUB_USER = "SuyeeII";
+const REPO = "suyeeii.github.io";
+// GitHub Issues 接口（无需认证，公开可读可写）
+const API_URL = `https://api.github.com/repos/${GITHUB_USER}/${REPO}/issues`;
 
-// 初始化匿名登录（无需注册）
-async function initAuth() {
-  try {
-    const loginState = await app.auth().getLoginState();
-    if (!loginState) {
-      await app.auth().signInAnonymously();
-    }
-  } catch (e) {
-    console.log("登录初始化", e);
-  }
-}
-
-// 上传图片到云存储（自动生成访问链接）
-async function uploadPhoto(file) {
+// 图片压缩（避免 Issues 内容过长）
+async function compressImage(file) {
   if (!file) return "";
+  return new Promise((resolve) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      img.src = e.target.result;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        // 压缩到 800px 宽
+        const scale = 800 / img.width;
+        canvas.width = 800;
+        canvas.height = img.height * scale;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        // 转为 base64（低质量，减小体积）
+        resolve(canvas.toDataURL("image/jpeg", 0.6));
+      };
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// 读取云端猫咪数据（从 GitHub Issues）
+async function getCats() {
   try {
-    // 上传文件到云存储
-    const uploadRes = await app.uploadFile({
-      cloudPath: `cat_photos/${Date.now()}_${file.name}`,
-      fileContent: file
-    });
-    // 获取图片访问链接
-    const downloadRes = await app.getTempFileURL({
-      fileList: [uploadRes.fileID]
-    });
-    return downloadRes.fileList[0].tempFileURL || "";
+    const res = await fetch(`${API_URL}?labels=cat&sort=created&direction=desc`);
+    if (!res.ok) throw new Error("获取数据失败");
+    const issues = await res.json();
+    // 解析 Issues 内容为猫咪数据
+    return issues.map(issue => {
+      try {
+        return JSON.parse(issue.body);
+      } catch (e) {
+        return null;
+      }
+    }).filter(Boolean);
   } catch (e) {
-    console.log("图片上传失败", e);
-    return "";
+    console.error("读取失败：", e);
+    return [];
   }
 }
 
-// 添加猫咪到云端（共享数据）
+// 发布猫咪数据（写入 GitHub Issues）
 async function addCat() {
   const name = document.getElementById("name").value.trim();
   if (!name) {
@@ -111,79 +121,79 @@ async function addCat() {
     return;
   }
 
-  // 先初始化登录
-  await initAuth();
-
+  // 收集表单数据
   const age = document.getElementById("age").value.trim() || "未知";
   const weight = document.getElementById("weight").value.trim() || "未知";
   const desc = document.getElementById("desc").value.trim() || "暂无描述";
   const photoFile = document.getElementById("photo").files[0];
-  const photo = await uploadPhoto(photoFile);
+  const photo = photoFile ? await compressImage(photoFile) : "";
   const time = new Date().toLocaleString();
 
+  // 组装 Issues 数据
+  const catData = { name, age, weight, desc, photo, time };
+  const issueData = {
+    title: `猫咪档案：${name}`,
+    body: JSON.stringify(catData),
+    labels: ["cat"] // 标记为猫咪档案，方便筛选
+  };
+
   try {
-    // 写入云端数据库
-    await catsCollection.add({
-      data: { 
-        name, 
-        age, 
-        weight, 
-        desc, 
-        photo, 
-        time, 
-        createTime: db.serverDate() 
-      }
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(issueData)
     });
-    alert("发布成功！所有设备都能看到这只猫咪啦～");
-    // 清空表单
-    document.getElementById("catForm").reset();
-    // 重新渲染列表
-    render();
+
+    if (res.ok) {
+      alert("发布成功！所有设备都能看到这只猫咪啦～");
+      document.getElementById("catForm").reset();
+      render(); // 重新渲染列表
+    } else {
+      // 处理 403 限流：提示等待
+      if (res.status === 403) {
+        alert("发布失败：访问过于频繁，请等待1分钟后重试");
+      } else {
+        alert("发布失败：请检查网络后重试");
+      }
+    }
   } catch (e) {
-    alert("发布失败：" + e.message);
+    alert("发布失败：网络连接异常");
   }
 }
 
-// 渲染猫咪列表（带搜索功能）
+// 渲染猫咪列表（带搜索）
 async function render() {
-  await initAuth();
-  
   const list = document.getElementById("cat-list");
   const keyword = document.getElementById("search").value.toLowerCase();
+  const cats = await getCats();
 
-  try {
-    // 从云端获取所有猫咪数据（按时间倒序）
-    const res = await catsCollection.orderBy('createTime', 'desc').get();
-    const cats = res.data || [];
-    
-    // 搜索过滤
-    const filtered = cats.filter(cat => 
-      cat.name.toLowerCase().includes(keyword)
-    );
+  // 搜索过滤
+  const filteredCats = cats.filter(cat => 
+    cat.name.toLowerCase().includes(keyword)
+  );
 
-    // 无数据时显示提示
-    if (filtered.length === 0) {
-      list.innerHTML = `<p style="text-align:center; color:#666; padding:20px">暂无猫咪档案，快来添加第一只吧～</p>`;
-      return;
-    }
-
-    // 渲染猫咪卡片
-    list.innerHTML = filtered.map(cat => `
-      <div class="cat-card">
-        ${cat.photo ? `<img src="${cat.photo}" alt="${cat.name}">` : ''}
-        <h3>${cat.name}</h3>
-        <p>年龄：${cat.age} ｜ 体重：${cat.weight} kg</p>
-        <p class="desc">${cat.desc}</p>
-        <small>添加时间：${cat.time}</small>
-      </div>
-    `).join("");
-  } catch (e) {
-    list.innerHTML = `<p style="text-align:center; color:#ff4444">加载失败，请刷新重试</p>`;
-    console.log("渲染失败", e);
+  // 空数据提示
+  if (filteredCats.length === 0) {
+    list.innerHTML = `<p style="text-align:center; color:#666; padding:20px">暂无猫咪档案，快来添加第一只吧～</p>`;
+    return;
   }
+
+  // 渲染卡片
+  list.innerHTML = filteredCats.map(cat => `
+    <div class="cat-card">
+      ${cat.photo ? `<img src="${cat.photo}" alt="${cat.name}">` : ""}
+      <h3>${cat.name}</h3>
+      <p>年龄：${cat.age} ｜ 体重：${cat.weight} kg</p>
+      <p class="desc">${cat.desc}</p>
+      <small>添加时间：${cat.time}</small>
+    </div>
+  `).join("");
 }
 
-// 页面加载时自动渲染列表
+// 页面加载时渲染
 window.onload = render;
 </script>
 </body>
